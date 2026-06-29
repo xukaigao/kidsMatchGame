@@ -56,6 +56,7 @@ const canvasEl   = document.getElementById('line-canvas');
 const ctx        = canvasEl.getContext('2d');
 const levelEl    = document.getElementById('level-num');
 const pairsEl    = document.getElementById('pairs-display');
+const coverEl    = document.getElementById('cover-display');
 const movesEl    = document.getElementById('moves-count');
 const winOverlay = document.getElementById('win-overlay');
 const winLevelEl = document.getElementById('win-level');
@@ -105,65 +106,123 @@ function shuffle(arr) {
   return arr;
 }
 
-// ─── BFS (used for hint & level generation only) ─────────────────────
-function bfsPath(tiles, occ, r1, c1, r2, c2, S, skipConn = -1) {
-  const prev = mkGrid(S, null);
-  const seen = mkGrid(S, false);
-  seen[r1][c1] = true;
-  prev[r1][c1] = { r: -1, c: -1 };
-  const q = [{ r: r1, c: c1 }];
-  while (q.length) {
-    const { r, c } = q.shift();
-    if (r === r2 && c === c2) {
-      const path = [];
-      let cur = { r, c };
-      while (cur.r !== -1) { path.unshift({ r: cur.r, c: cur.c }); cur = prev[cur.r][cur.c]; }
-      return path;
-    }
-    for (const [dr, dc] of [[-1,0],[1,0],[0,-1],[0,1]]) {
+const randInt = n => Math.floor(Math.random() * n);
+
+// ─── Hamiltonian path over the whole grid ────────────────────────────
+// Randomized DFS with Warnsdorff heuristic (prefer cells with fewer onward
+// moves). Visits every cell exactly once. Falls back to a serpentine path.
+function hamiltonianPath(S) {
+  const total   = S * S;
+  const visited = mkGrid(S, false);
+  const path    = [];
+  let   budget  = 200000; // safety cap on DFS steps
+
+  const DIRS = [[-1,0],[1,0],[0,-1],[0,1]];
+
+  function onwardDegree(r, c) {
+    let d = 0;
+    for (const [dr, dc] of DIRS) {
       const nr = r + dr, nc = c + dc;
-      if (nr < 0 || nr >= S || nc < 0 || nc >= S || seen[nr][nc]) continue;
-      const isDest = nr === r2 && nc === c2;
-      if (tiles[nr][nc] !== null && !isDest) continue;
-      if (occ[nr][nc] !== null && occ[nr][nc] !== skipConn) continue;
-      seen[nr][nc] = true;
-      prev[nr][nc] = { r, c };
-      q.push({ r: nr, c: nc });
+      if (nr >= 0 && nr < S && nc >= 0 && nc < S && !visited[nr][nc]) d++;
     }
+    return d;
   }
-  return null;
+
+  function dfs(r, c) {
+    if (--budget <= 0) return false;
+    visited[r][c] = true;
+    path.push({ r, c });
+    if (path.length === total) return true;
+
+    // Collect unvisited neighbours
+    let nbrs = [];
+    for (const [dr, dc] of DIRS) {
+      const nr = r + dr, nc = c + dc;
+      if (nr >= 0 && nr < S && nc >= 0 && nc < S && !visited[nr][nc]) {
+        nbrs.push({ r: nr, c: nc });
+      }
+    }
+    // Random shuffle, then sort by Warnsdorff degree (fewest options first)
+    shuffle(nbrs);
+    nbrs.sort((a, b) => onwardDegree(a.r, a.c) - onwardDegree(b.r, b.c));
+
+    for (const n of nbrs) {
+      if (dfs(n.r, n.c)) return true;
+    }
+
+    visited[r][c] = false;
+    path.pop();
+    return false;
+  }
+
+  if (dfs(randInt(S), randInt(S)) && path.length === total) return path;
+
+  // Fallback: serpentine (boustrophedon) — always full coverage
+  const serp = [];
+  for (let r = 0; r < S; r++) {
+    if (r % 2 === 0) for (let c = 0;     c < S;  c++) serp.push({ r, c });
+    else             for (let c = S - 1; c >= 0; c--) serp.push({ r, c });
+  }
+  return serp;
 }
 
-// ─── Level generator ─────────────────────────────────────────────────
-function generateLevel(size, numPairs, maxTries = 300) {
-  for (let t = 0; t < maxTries; t++) {
-    const tiles = mkGrid(size);
-    const occ   = mkGrid(size);
-    const positions = shuffle(allPositions(size));
-    if (positions.length < numPairs * 2) continue;
+// ─── Level generator (guarantees a full-coverage solution exists) ────
+// Build one Hamiltonian path covering every cell, then cut it into
+// `numPairs` contiguous segments. Each segment's two ends become a tile
+// pair, and the segment itself is the stored solution. Because the
+// segments partition the whole board, a fill-everything solution always
+// exists.
+function generateLevel(size, numPairs) {
+  const total = size * size;
+  // Each segment needs >= 2 cells (two distinct endpoints).
+  const maxPairs = Math.floor(total / 2);
+  const K = Math.min(numPairs, maxPairs);
 
-    const conns = [];
-    for (let i = 0; i < numPairs; i++) {
-      const pos1 = positions[i * 2], pos2 = positions[i * 2 + 1];
-      tiles[pos1.r][pos1.c] = ICONS[i];
-      tiles[pos2.r][pos2.c] = ICONS[i];
-      conns.push({ icon: ICONS[i], pos1, pos2,
-                   color: PIPE_COLORS[i % PIPE_COLORS.length], path: null });
-    }
+  const ham = hamiltonianPath(size);
 
-    let ok = true;
-    for (let i = 0; i < numPairs; i++) {
-      const { pos1, pos2 } = conns[i];
-      const path = bfsPath(tiles, occ, pos1.r, pos1.c, pos2.r, pos2.c, size);
-      if (!path) { ok = false; break; }
-      path.forEach(p => {
-        if (!(p.r === pos1.r && p.c === pos1.c) && !(p.r === pos2.r && p.c === pos2.c))
-          occ[p.r][p.c] = i;
-      });
-    }
-    if (ok) return { size, tiles, conns };
+  // Assign each segment a base length of 2, distribute the rest randomly.
+  const lengths = Array(K).fill(2);
+  let remaining = total - 2 * K;
+  while (remaining-- > 0) lengths[randInt(K)]++;
+
+  const tiles = mkGrid(size);
+  const conns = [];
+  let idx = 0;
+  for (let i = 0; i < K; i++) {
+    const seg  = ham.slice(idx, idx + lengths[i]);
+    idx += lengths[i];
+    const pos1 = seg[0];
+    const pos2 = seg[seg.length - 1];
+    tiles[pos1.r][pos1.c] = ICONS[i];
+    tiles[pos2.r][pos2.c] = ICONS[i];
+    conns.push({
+      icon: ICONS[i],
+      pos1, pos2,
+      color: PIPE_COLORS[i % PIPE_COLORS.length],
+      path: null,
+      solution: seg,   // the full-coverage answer for this pair (used by hint)
+    });
   }
-  return numPairs > 2 ? generateLevel(size, numPairs - 1, maxTries) : null;
+
+  return { size, tiles, conns };
+}
+
+// ─── Coverage helpers ────────────────────────────────────────────────
+// A cell counts as covered if it holds a tile OR a pipe passes through it.
+function coveredCount() {
+  let n = 0;
+  for (let r = 0; r < boardSize; r++)
+    for (let c = 0; c < boardSize; c++)
+      if (tileGrid[r][c] !== null || occupancy[r][c] !== null) n++;
+  return n;
+}
+
+function isBoardFull() {
+  return coveredCount() === boardSize * boardSize;
+}
+
+function updateCoverage() {
+  coverEl.textContent = `${coveredCount()} / ${boardSize * boardSize}`;
 }
 
 // ─── Hit test: which cell is at client coordinates? ──────────────────
@@ -374,11 +433,19 @@ function endDrag(clientX, clientY) {
     movesEl.textContent = moveCount;
     completedPairs = connections.filter(cn => cn.path !== null).length;
     pairsEl.textContent = `${completedPairs} / ${connections.length}`;
+    updateCoverage();
 
     dragSource = null; dragPath = []; dragConnIdx = -1;
     renderBoard();
 
-    if (completedPairs === connections.length) setTimeout(handleWin, 450);
+    // Win only when ALL pairs are connected AND every cell is filled.
+    if (completedPairs === connections.length) {
+      if (isBoardFull()) {
+        setTimeout(handleWin, 450);
+      } else {
+        showToast('全部连上啦！但还有空格没填满，每个格子都要走到哦 🧩');
+      }
+    }
 
   } else {
     // Cancel: discard preview
@@ -396,6 +463,7 @@ function clearConn(ci) {
   conn.path = null;
   completedPairs = connections.filter(cn => cn.path !== null).length;
   pairsEl.textContent = `${completedPairs} / ${connections.length}`;
+  updateCoverage();
 }
 
 function clearAll() {
@@ -432,16 +500,20 @@ function handleWin() {
 // ─── Hint ─────────────────────────────────────────────────────────────
 function showHint() {
   if (isComplete) return;
-  const target = connections.find(cn => cn.path === null);
-  if (!target) return;
-  const ci   = connections.indexOf(target);
-  const path = bfsPath(tileGrid, occupancy,
-    target.pos1.r, target.pos1.c, target.pos2.r, target.pos2.c,
-    boardSize, ci);
-  if (!path) { showToast('提示：先清除一些连线腾出空间！'); return; }
-  hintData = { path, color: target.color };
+  // Prefer an unfinished pair; otherwise hint a wrongly-routed one.
+  let target = connections.find(cn => cn.path === null);
+  if (!target) {
+    // All connected but board not full → hint a pair whose drawn path
+    // differs from its full-coverage solution.
+    target = connections.find(cn =>
+      !cn.path || cn.path.length !== cn.solution.length);
+  }
+  if (!target || !target.solution) return;
+
+  // Show the real full-coverage solution segment for this pair.
+  hintData = { path: target.solution, color: target.color };
   redrawCanvas();
-  setTimeout(() => { if (hintData) { hintData = null; redrawCanvas(); } }, 2500);
+  setTimeout(() => { if (hintData) { hintData = null; redrawCanvas(); } }, 2800);
 }
 
 // ─── New level ────────────────────────────────────────────────────────
@@ -466,6 +538,7 @@ function newLevel() {
 
   levelEl.textContent = `${levelNum}`;
   pairsEl.textContent = `0 / ${connections.length}`;
+  updateCoverage();
   renderBoard();
 }
 
