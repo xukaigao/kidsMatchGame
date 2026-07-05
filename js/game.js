@@ -296,15 +296,15 @@ function redrawCanvas() {
     drawPipeStroke(pts, color, 0.6, 0.16);
   }
 
-  // ── Hint (dashed white) ──────────────────────────────────────
+  // ── Hint (dashed dark, visible on light board) ──────────────
   if (hintData) {
     const pts = hintData.path.map(p => cellCenter(p.r, p.c));
     ctx.beginPath();
-    ctx.strokeStyle = '#ffffff';
+    ctx.strokeStyle = '#3a5a40';
     ctx.lineWidth   = px * 0.26;
     ctx.lineCap     = 'round';
     ctx.lineJoin    = 'round';
-    ctx.globalAlpha = 0.65;
+    ctx.globalAlpha = 0.8;
     ctx.setLineDash([px * 0.2, px * 0.12]);
     ctx.moveTo(pts[0].x, pts[0].y);
     pts.slice(1).forEach(p => ctx.lineTo(p.x, p.y));
