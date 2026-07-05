@@ -86,10 +86,10 @@ header h1 {
   color: var(--primary);
 }
 .diff-btn.active {
-  border-color: var(--primary);
-  background: var(--primary);
-  color: white;
-  box-shadow: 0 4px 14px rgba(233,69,96,0.45);
+  border-color: #5a8a5a;
+  background: #ffffff;
+  color: #4a6b4a;
+  box-shadow: 0 4px 12px rgba(90,138,90,0.28);
 }
 
 #action-btns { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; }
@@ -107,7 +107,7 @@ header h1 {
 #action-btns button:active  { transform: translateY(4px); box-shadow: 0 1px 0 rgba(60,90,60,0.25); }
 #action-btns button:hover:not(:active) { transform: translateY(-2px); }
 
-#btn-new   { background: linear-gradient(135deg,#e94560,#f5607a); color:#fff; }
+#btn-new   { background: #ffffff; color:#4a6b4a; border: 2px solid rgba(60,90,60,0.22); }
 #btn-hint  { background: linear-gradient(135deg,#f5a623,#ffd166); color:#1a1a2e; }
 #btn-clear { background: #ffffff; color:#4a6b4a; border: 2px solid rgba(60,90,60,0.22); }
 
